@@ -101,6 +101,22 @@ impl Default for OxrInitPlugin {
 impl Plugin for OxrInitPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<OxrSessionConfig>();
+        #[cfg(target_os = "android")]
+        {
+            // force-enable khr_android_thread_settings so the runtime can
+            // prioritize the application's main and render threads.
+            self.exts.raw_mut().khr_android_thread_settings = true;
+        }
+        #[cfg(target_os = "android")]
+        {
+            let main_tid = unsafe { libc::gettid() } as u32;
+            app.insert_resource(crate::openxr::android_thread_settings::MainThreadTid(main_tid));
+            if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
+                render_app.insert_resource(
+                    crate::openxr::android_thread_settings::MainThreadTid(main_tid),
+                );
+            }
+        }
         let cfg = app.world_mut().remove_resource::<OxrManualGraphicsConfig>();
         match self.init_xr(cfg.as_ref()) {
             Ok((
@@ -515,6 +531,20 @@ pub fn create_xr_session(world: &mut World) {
             blend_modes,
         )) => {
             world.insert_resource(session.clone());
+            #[cfg(target_os = "android")]
+            {
+                let main_tid = world
+                    .get_resource::<crate::openxr::android_thread_settings::MainThreadTid>()
+                    .map(|t| t.0)
+                    .unwrap_or(0);
+                if main_tid != 0 {
+                    crate::openxr::android_thread_settings::tag_android_threads(
+                        &**instance,
+                        &session,
+                        main_tid,
+                    );
+                }
+            }
             world.insert_resource(frame_waiter);
             world.insert_resource(images);
             world.insert_resource(graphics_info);
